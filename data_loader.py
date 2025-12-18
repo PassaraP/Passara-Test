@@ -196,6 +196,46 @@ def get_thai_tickers() -> List[str]:
     ]
 
 
+def download_benchmark(
+    benchmark_ticker: str = '^GSPC',
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    years: int = 10
+) -> Tuple[pd.Series, pd.Series]:
+    """
+    Download S&P 500 benchmark data.
+
+    Args:
+        benchmark_ticker: Ticker symbol for benchmark (default: ^GSPC for S&P 500)
+        start_date: Start date in 'YYYY-MM-DD' format
+        end_date: End date in 'YYYY-MM-DD' format
+        years: Number of years of historical data
+
+    Returns:
+        Tuple of (prices Series, returns Series)
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+
+    if start_date is None:
+        start = datetime.strptime(end_date, '%Y-%m-%d') - timedelta(days=years*365)
+        start_date = start.strftime('%Y-%m-%d')
+
+    print(f"Downloading benchmark {benchmark_ticker} from {start_date} to {end_date}...")
+
+    data = yf.download(benchmark_ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
+
+    if isinstance(data.columns, pd.MultiIndex):
+        prices = data['Close'].iloc[:, 0] if len(data['Close'].shape) > 1 else data['Close']
+    else:
+        prices = data['Close']
+
+    prices = prices.ffill().bfill()
+    returns = np.log(prices / prices.shift(1)).dropna()
+
+    return prices, returns
+
+
 if __name__ == "__main__":
     tickers = get_default_tickers()
     prices, returns, cleaned_returns = load_and_prepare_data(tickers, years=10)

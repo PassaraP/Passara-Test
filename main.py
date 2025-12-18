@@ -7,19 +7,23 @@ Generates JSON output with optimal weights, backtest returns, and stress scenari
 
 import json
 import argparse
+import os
 from datetime import datetime
 from typing import Dict, List, Optional
 
 from data_loader import (
     load_and_prepare_data,
     get_default_tickers,
-    get_thai_tickers
+    get_thai_tickers,
+    download_benchmark
 )
 from portfolio_optimizer import (
     optimize_portfolio,
     backtest_portfolio,
     calculate_backtest_metrics,
-    get_portfolio_returns_series
+    get_portfolio_returns_series,
+    backtest_benchmark,
+    get_individual_stock_performance
 )
 from scenario_modeling import (
     create_trump_tariff_scenario,
@@ -66,7 +70,7 @@ def run_portfolio_analysis(
     print("PORTFOLIO OPTIMIZATION AND STRESS TESTING")
     print("="*70)
 
-    print("\n[1/4] Loading and preparing data...")
+    print("\n[1/5] Loading and preparing data...")
     prices, returns, cleaned_returns = load_and_prepare_data(
         tickers,
         years=historical_years
@@ -75,7 +79,11 @@ def run_portfolio_analysis(
     available_tickers = list(cleaned_returns.columns)
     available_thai = [t for t in thai_tickers if t in available_tickers]
 
-    print(f"\n[2/4] Optimizing portfolio (long-only constraint)...")
+    # Download S&P500 benchmark
+    print("\n  Downloading S&P 500 benchmark...")
+    _, benchmark_returns = download_benchmark('^GSPC', years=historical_years)
+
+    print(f"\n[2/5] Optimizing portfolio (long-only constraint)...")
     optimization_result = optimize_portfolio(
         cleaned_returns,
         objective='max_sharpe'
@@ -94,17 +102,41 @@ def run_portfolio_analysis(
         if weight > 0.01:
             print(f"    {ticker}: {weight:.2%}")
 
-    print(f"\n[3/4] Running historical backtest...")
+    print(f"\n[3/5] Running historical backtest...")
     backtest = backtest_portfolio(cleaned_returns, optimization_result['weights'])
     backtest_metrics = calculate_backtest_metrics(backtest)
-    backtest_returns = get_portfolio_returns_series(backtest)
+    backtest_returns_data = get_portfolio_returns_series(backtest)
 
-    print(f"  Total Return: {backtest_metrics['total_return']:.2%}")
-    print(f"  Annualized Return: {backtest_metrics['annualized_return']:.2%}")
-    print(f"  Max Drawdown: {backtest_metrics['max_drawdown']:.2%}")
-    print(f"  Sharpe Ratio: {backtest_metrics['sharpe_ratio']:.2f}")
+    # Benchmark backtest
+    benchmark_bt = backtest_benchmark(cleaned_returns, benchmark_returns)
+    benchmark_metrics = calculate_backtest_metrics(benchmark_bt.rename(columns={
+        'benchmark_return': 'portfolio_return',
+        'benchmark_value': 'portfolio_value'
+    }))
 
-    print(f"\n[4/4] Running stress test simulation...")
+    print(f"  Portfolio Total Return: {backtest_metrics['total_return']:.2%}")
+    print(f"  Benchmark Total Return: {benchmark_metrics['total_return']:.2%}")
+    print(f"  Outperformance: {(backtest_metrics['total_return'] - benchmark_metrics['total_return']):.2%}")
+    print(f"  Portfolio Sharpe: {backtest_metrics['sharpe_ratio']:.2f}")
+
+    # Individual stock performance
+    print(f"\n[4/5] Calculating individual stock performance...")
+    individual_stock_backtest = get_individual_stock_performance(
+        cleaned_returns, optimization_result['weights']
+    )
+    print(f"  Tracked {len(individual_stock_backtest)} stocks with significant weights")
+
+    # Get benchmark returns series for JSON
+    benchmark_returns_series = []
+    for date, row in benchmark_bt.iterrows():
+        benchmark_returns_series.append({
+            'date': date.strftime('%Y-%m-%d'),
+            'daily_return': float(row['benchmark_return']),
+            'cumulative_return': float(row['cumulative_return']),
+            'benchmark_value': float(row['benchmark_value'])
+        })
+
+    print(f"\n[5/5] Running stress test simulation...")
     print(f"  Scenario: Trump Tariffs Impact")
     print(f"  Affected assets: {len(available_thai)} Thai-related tickers")
     print(f"  Expected drop: {stress_drop_mean:.1%} ± {stress_drop_std:.1%}")
@@ -133,6 +165,16 @@ def run_portfolio_analysis(
     print(f"    P(Loss): {stress_results['statistics']['probability_of_loss']:.2%}")
     print(f"    P(Loss > 10%): {stress_results['statistics']['probability_of_10pct_loss']:.2%}")
 
+    # Calculate historical returns distribution
+    portfolio_daily_returns = [d['daily_return'] for d in backtest_returns_data]
+    historical_returns_dist = {
+        'mean': float(sum(portfolio_daily_returns) / len(portfolio_daily_returns)),
+        'std': float((sum((r - sum(portfolio_daily_returns)/len(portfolio_daily_returns))**2 for r in portfolio_daily_returns) / len(portfolio_daily_returns))**0.5),
+        'min': float(min(portfolio_daily_returns)),
+        'max': float(max(portfolio_daily_returns)),
+        'daily_returns': portfolio_daily_returns
+    }
+
     results = {
         'metadata': {
             'generated_at': datetime.now().isoformat(),
@@ -140,7 +182,8 @@ def run_portfolio_analysis(
             'forward_years': forward_years,
             'tickers_requested': tickers,
             'tickers_available': available_tickers,
-            'thai_tickers_affected': available_thai
+            'thai_tickers_affected': available_thai,
+            'benchmark': 'S&P 500 (^GSPC)'
         },
         'optimal_weights': optimization_result['weights'],
         'optimization_stats': {
@@ -150,12 +193,22 @@ def run_portfolio_analysis(
         },
         'backtest': {
             'metrics': backtest_metrics,
-            'returns': backtest_returns
+            'returns': backtest_returns_data,
+            'individual_stocks': individual_stock_backtest,
+            'returns_distribution': historical_returns_dist
+        },
+        'benchmark': {
+            'metrics': benchmark_metrics,
+            'returns': benchmark_returns_series
         },
         'stress_test': stress_results
     }
 
     if output_file:
+        # Ensure directory exists
+        output_dir = os.path.dirname(output_file)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
         print(f"\nSaving results to {output_file}...")
         with open(output_file, 'w') as f:
             json.dump(results, f, indent=2, default=str)
@@ -212,8 +265,8 @@ def main():
     parser.add_argument(
         '--output',
         type=str,
-        default='portfolio_analysis.json',
-        help='Output JSON file path (default: portfolio_analysis.json)'
+        default='reports/portfolio_analysis.json',
+        help='Output JSON file path (default: reports/portfolio_analysis.json)'
     )
 
     args = parser.parse_args()

@@ -22,7 +22,7 @@ def load_results(json_path: str) -> Dict:
 
 def plot_optimal_weights(results: Dict, output_path: str) -> None:
     """
-    Create a bar chart of optimal portfolio weights.
+    Create a pie chart of optimal portfolio weights.
 
     Args:
         results: Portfolio analysis results
@@ -49,17 +49,28 @@ def plot_optimal_weights(results: Dict, output_path: str) -> None:
         else:
             colors.append('#2ecc71')  # Green for global
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    bars = ax.barh(tickers, values, color=colors, edgecolor='white', linewidth=0.5)
+    fig, ax = plt.subplots(figsize=(12, 8))
 
-    # Add value labels
-    for bar, val in zip(bars, values):
-        ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
-                f'{val:.1f}%', va='center', fontsize=10)
+    # Create pie chart
+    wedges, texts, autotexts = ax.pie(
+        values,
+        labels=tickers,
+        autopct='%1.1f%%',
+        colors=colors,
+        pctdistance=0.75,
+        labeldistance=1.1,
+        startangle=90,
+        explode=[0.02] * len(tickers)
+    )
 
-    ax.set_xlabel('Weight (%)', fontsize=12)
+    # Style the labels
+    for text in texts:
+        text.set_fontsize(10)
+    for autotext in autotexts:
+        autotext.set_fontsize(9)
+        autotext.set_fontweight('bold')
+
     ax.set_title('Optimal Portfolio Weights (Max Sharpe Ratio)', fontsize=14, fontweight='bold')
-    ax.set_xlim(0, max(values) * 1.15)
 
     # Add legend
     from matplotlib.patches import Patch
@@ -69,15 +80,15 @@ def plot_optimal_weights(results: Dict, output_path: str) -> None:
         Patch(facecolor='#2ecc71', label='Global'),
         Patch(facecolor='#f39c12', label='FX')
     ]
-    ax.legend(handles=legend_elements, loc='lower right')
+    ax.legend(handles=legend_elements, loc='lower right', bbox_to_anchor=(1.15, 0))
 
     # Add stats annotation
     stats = results['optimization_stats']
     stats_text = f"Expected Return: {stats['expected_return']*100:.2f}%\n"
     stats_text += f"Volatility: {stats['volatility']*100:.2f}%\n"
     stats_text += f"Sharpe Ratio: {stats['sharpe_ratio']:.2f}"
-    ax.text(0.98, 0.02, stats_text, transform=ax.transAxes, fontsize=10,
-            verticalalignment='bottom', horizontalalignment='right',
+    ax.text(1.15, 0.5, stats_text, transform=ax.transAxes, fontsize=10,
+            verticalalignment='center', horizontalalignment='left',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
     plt.tight_layout()
@@ -88,27 +99,40 @@ def plot_optimal_weights(results: Dict, output_path: str) -> None:
 
 def plot_backtest_performance(results: Dict, output_path: str) -> None:
     """
-    Create a chart showing historical backtest performance.
+    Create a chart showing historical backtest performance with S&P 500 benchmark.
 
     Args:
         results: Portfolio analysis results
         output_path: Path to save the figure
     """
     backtest_data = results['backtest']['returns']
+    benchmark_data = results.get('benchmark', {}).get('returns', [])
 
     dates = [datetime.strptime(d['date'], '%Y-%m-%d') for d in backtest_data]
     portfolio_values = [d['portfolio_value'] for d in backtest_data]
-    cumulative_returns = [d['cumulative_return'] * 100 for d in backtest_data]
 
     fig, axes = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
-    # Portfolio value
+    # Portfolio value with benchmark
     ax1 = axes[0]
-    ax1.plot(dates, portfolio_values, color='#2c3e50', linewidth=1.5)
-    ax1.fill_between(dates, portfolio_values, alpha=0.3, color='#3498db')
+    ax1.plot(dates, portfolio_values, color='#2c3e50', linewidth=1.5, label='Optimized Portfolio')
+
+    # Plot benchmark if available
+    if benchmark_data:
+        benchmark_dates = [datetime.strptime(d['date'], '%Y-%m-%d') for d in benchmark_data]
+        benchmark_values = [d['benchmark_value'] for d in benchmark_data]
+        ax1.plot(benchmark_dates, benchmark_values, color='#e74c3c', linewidth=1.5,
+                 linestyle='--', alpha=0.8, label='S&P 500 Benchmark')
+
+    ax1.fill_between(dates, portfolio_values, alpha=0.2, color='#3498db')
     ax1.set_ylabel('Portfolio Value', fontsize=12)
-    ax1.set_title('Historical Backtest Performance', fontsize=14, fontweight='bold')
+    ax1.set_title('Historical Backtest Performance vs S&P 500 Benchmark', fontsize=14, fontweight='bold')
+    ax1.legend(loc='upper left')
     ax1.grid(True, alpha=0.3)
+
+    # Add vertical line at today's date (hard stop)
+    today = datetime.now()
+    ax1.axvline(x=today, color='gray', linestyle=':', alpha=0.7, label='Today')
 
     # Calculate and plot drawdown
     portfolio_arr = np.array(portfolio_values)
@@ -128,17 +152,82 @@ def plot_backtest_performance(results: Dict, output_path: str) -> None:
 
     # Add metrics annotation
     metrics = results['backtest']['metrics']
-    metrics_text = f"Total Return: {metrics['total_return']*100:.1f}%\n"
-    metrics_text += f"Ann. Return: {metrics['annualized_return']*100:.2f}%\n"
-    metrics_text += f"Ann. Volatility: {metrics['annualized_volatility']*100:.2f}%\n"
-    metrics_text += f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}\n"
-    metrics_text += f"Sortino Ratio: {metrics['sortino_ratio']:.2f}\n"
-    metrics_text += f"Max Drawdown: {metrics['max_drawdown']*100:.1f}%"
+    benchmark_metrics = results.get('benchmark', {}).get('metrics', {})
+
+    metrics_text = f"Portfolio:\n"
+    metrics_text += f"  Total Return: {metrics['total_return']*100:.1f}%\n"
+    metrics_text += f"  Sharpe Ratio: {metrics['sharpe_ratio']:.2f}\n"
+    metrics_text += f"  Max Drawdown: {metrics['max_drawdown']*100:.1f}%\n\n"
+
+    if benchmark_metrics:
+        metrics_text += f"Benchmark (S&P 500):\n"
+        metrics_text += f"  Total Return: {benchmark_metrics['total_return']*100:.1f}%\n"
+        outperformance = metrics['total_return'] - benchmark_metrics['total_return']
+        metrics_text += f"\nOutperformance: {outperformance*100:.1f}%"
 
     ax1.text(0.02, 0.98, metrics_text, transform=ax1.transAxes, fontsize=10,
              verticalalignment='top', horizontalalignment='left',
              bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
 
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_path}")
+
+
+def plot_individual_stocks_backtest(results: Dict, output_path: str) -> None:
+    """
+    Create a chart showing individual stock performance in the portfolio (backtest).
+
+    Args:
+        results: Portfolio analysis results
+        output_path: Path to save the figure
+    """
+    individual_stocks = results['backtest'].get('individual_stocks', {})
+    if not individual_stocks:
+        print(f"Skipped: {output_path} (no individual stock data)")
+        return
+
+    n_stocks = len(individual_stocks)
+    n_cols = min(3, n_stocks)
+    n_rows = (n_stocks + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows), sharex=True)
+    if n_stocks == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+
+    for idx, (ticker, data) in enumerate(individual_stocks.items()):
+        ax = axes[idx]
+        dates = [datetime.strptime(d['date'], '%Y-%m-%d') for d in data]
+        values = [d['value'] for d in data]
+
+        # Color by asset type
+        if ticker.endswith('.BK'):
+            color = '#e74c3c'
+        elif ticker in ['VWOB', 'EMLC', 'LEMB']:
+            color = '#3498db'
+        elif ticker == 'THB=X':
+            color = '#f39c12'
+        else:
+            color = '#2ecc71'
+
+        ax.plot(dates, values, color=color, linewidth=1)
+        ax.fill_between(dates, values, alpha=0.3, color=color)
+        ax.set_title(ticker, fontweight='bold')
+        ax.grid(True, alpha=0.3)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
+        # Calculate return
+        total_return = (values[-1] - values[0]) / values[0] * 100
+        ax.text(0.02, 0.98, f'Return: {total_return:.1f}%', transform=ax.transAxes,
+                fontsize=9, verticalalignment='top')
+
+    # Hide unused subplots
+    for idx in range(n_stocks, len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle('Individual Stock Performance (Historical Backtest)', fontsize=14, fontweight='bold')
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
@@ -262,6 +351,166 @@ def plot_stress_test_distribution(results: Dict, output_path: str) -> None:
     print(f"Saved: {output_path}")
 
 
+def plot_returns_distribution(results: Dict, output_path: str) -> None:
+    """
+    Create a comparison of historical and stress test returns distributions.
+
+    Args:
+        results: Portfolio analysis results
+        output_path: Path to save the figure
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
+    # Historical returns distribution
+    ax1 = axes[0]
+    backtest_returns = results['backtest'].get('returns_distribution', {})
+    historical_daily_returns = backtest_returns.get('daily_returns', [])
+
+    if historical_daily_returns:
+        historical_returns_pct = [r * 100 for r in historical_daily_returns]
+        n1, bins1, patches1 = ax1.hist(historical_returns_pct, bins=50, color='#3498db',
+                                        edgecolor='white', alpha=0.7, density=True)
+        for patch, left in zip(patches1, bins1[:-1]):
+            if left < 0:
+                patch.set_facecolor('#e74c3c')
+
+        ax1.axvline(x=0, color='gray', linestyle='-', alpha=0.5)
+
+        mean_ret = backtest_returns.get('mean', 0) * 100
+        ax1.axvline(x=mean_ret, color='#27ae60', linestyle='-', linewidth=2,
+                    label=f'Mean: {mean_ret:.3f}%')
+
+        ax1.set_xlabel('Daily Return (%)', fontsize=12)
+        ax1.set_ylabel('Density', fontsize=12)
+        ax1.set_title('Historical Daily Returns Distribution', fontsize=12, fontweight='bold')
+        ax1.legend(loc='upper right')
+        ax1.grid(True, alpha=0.3, axis='y')
+
+    # Stress test returns distribution
+    ax2 = axes[1]
+    stress_test = results['stress_test']
+    sample_paths = stress_test['sample_paths']
+    stress_returns = [p['return'] * 100 for p in sample_paths]
+
+    n2, bins2, patches2 = ax2.hist(stress_returns, bins=30, color='#3498db',
+                                    edgecolor='white', alpha=0.7, density=True)
+    for patch, left in zip(patches2, bins2[:-1]):
+        if left < 0:
+            patch.set_facecolor('#e74c3c')
+
+    ax2.axvline(x=0, color='gray', linestyle='-', alpha=0.5)
+
+    statistics = stress_test['statistics']
+    var_95 = statistics['var_95'] * 100
+    mean_ret = statistics['mean_return'] * 100
+
+    ax2.axvline(x=var_95, color='#e74c3c', linestyle='--', linewidth=2,
+                label=f'VaR 95%: {var_95:.1f}%')
+    ax2.axvline(x=mean_ret, color='#27ae60', linestyle='-', linewidth=2,
+                label=f'Mean: {mean_ret:.1f}%')
+
+    ax2.set_xlabel('Total Return (%)', fontsize=12)
+    ax2.set_ylabel('Density', fontsize=12)
+    ax2.set_title(f'Stress Test Returns Distribution\n({stress_test["n_simulations"]} simulations, 1 year)',
+                  fontsize=12, fontweight='bold')
+    ax2.legend(loc='upper right')
+    ax2.grid(True, alpha=0.3, axis='y')
+
+    fig.suptitle('Returns Distribution Comparison: Historical vs Stress Test',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_path}")
+
+
+def plot_stress_test_individual_stocks(results: Dict, output_path: str) -> None:
+    """
+    Create a chart showing individual stock stress simulation paths.
+
+    Args:
+        results: Portfolio analysis results
+        output_path: Path to save the figure
+    """
+    # Get asset paths from stress test if available
+    stress_test = results['stress_test']
+    weights = results['optimal_weights']
+
+    # We'll show the percentile paths for each asset contribution
+    # Since we don't have individual asset paths in JSON, show scenario impact
+    significant_weights = {k: v for k, v in weights.items() if v > 0.01}
+
+    if not significant_weights:
+        print(f"Skipped: {output_path} (no significant weights)")
+        return
+
+    scenario_config = stress_test['scenario_config']
+    affected_assets = scenario_config['affected_assets']
+
+    n_stocks = len(significant_weights)
+    n_cols = min(3, n_stocks)
+    n_rows = (n_stocks + n_cols - 1) // n_cols
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 4*n_rows))
+    if n_stocks == 1:
+        axes = np.array([axes])
+    axes = axes.flatten()
+
+    n_steps = len(stress_test['percentile_paths']['mean'])
+    days = np.arange(n_steps)
+
+    for idx, (ticker, weight) in enumerate(significant_weights.items()):
+        ax = axes[idx]
+
+        # Determine if affected by stress
+        is_affected = ticker in affected_assets
+
+        # Color by asset type
+        if ticker.endswith('.BK'):
+            color = '#e74c3c'
+        elif ticker in ['VWOB', 'EMLC', 'LEMB']:
+            color = '#3498db'
+        elif ticker == 'THB=X':
+            color = '#f39c12'
+        else:
+            color = '#2ecc71'
+
+        # Simulate a simple path for visualization (using portfolio paths scaled by weight)
+        portfolio_mean = np.array(stress_test['percentile_paths']['mean'])
+        portfolio_p25 = np.array(stress_test['percentile_paths']['p25'])
+        portfolio_p75 = np.array(stress_test['percentile_paths']['p75'])
+
+        # Scale to this asset's contribution
+        asset_mean = portfolio_mean * weight
+        asset_p25 = portfolio_p25 * weight
+        asset_p75 = portfolio_p75 * weight
+
+        ax.fill_between(days, asset_p25, asset_p75, alpha=0.3, color=color)
+        ax.plot(days, asset_mean, color=color, linewidth=1.5)
+
+        status = "AFFECTED" if is_affected else "Unaffected"
+        title_color = '#c0392b' if is_affected else '#2c3e50'
+        ax.set_title(f'{ticker}\n({status})', fontweight='bold', color=title_color)
+        ax.set_xlabel('Days')
+        ax.set_ylabel('Value')
+        ax.grid(True, alpha=0.3)
+
+        # Add weight info
+        ax.text(0.02, 0.98, f'Weight: {weight*100:.1f}%', transform=ax.transAxes,
+                fontsize=9, verticalalignment='top')
+
+    # Hide unused subplots
+    for idx in range(n_stocks, len(axes)):
+        axes[idx].set_visible(False)
+
+    fig.suptitle('Individual Stock Stress Simulation\n(Contribution to Portfolio)',
+                 fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {output_path}")
+
+
 def plot_summary_dashboard(results: Dict, output_path: str) -> None:
     """
     Create a summary dashboard with multiple panels.
@@ -379,7 +628,7 @@ def plot_summary_dashboard(results: Dict, output_path: str) -> None:
 
 def generate_all_visualizations(
     json_path: str,
-    output_dir: str = 'result'
+    output_dir: str = 'reports'
 ) -> None:
     """
     Generate all visualizations and save to output directory.
@@ -398,17 +647,21 @@ def generate_all_visualizations(
     print(f"\nGenerating visualizations in '{output_dir}/'...")
 
     # Generate all plots
-    plot_optimal_weights(results, os.path.join(output_dir, 'portfolio_weights.png'))
+    plot_optimal_weights(results, os.path.join(output_dir, 'portfolio_weights_pie.png'))
     plot_backtest_performance(results, os.path.join(output_dir, 'backtest_performance.png'))
+    plot_individual_stocks_backtest(results, os.path.join(output_dir, 'individual_stocks_backtest.png'))
     plot_stress_test_paths(results, os.path.join(output_dir, 'stress_test_paths.png'))
     plot_stress_test_distribution(results, os.path.join(output_dir, 'stress_test_distribution.png'))
+    plot_stress_test_individual_stocks(results, os.path.join(output_dir, 'stress_test_individual_stocks.png'))
+    plot_returns_distribution(results, os.path.join(output_dir, 'returns_distribution.png'))
     plot_summary_dashboard(results, os.path.join(output_dir, 'summary_dashboard.png'))
 
-    # Copy JSON to result folder
+    # Copy JSON to reports folder if not already there
     import shutil
     json_dest = os.path.join(output_dir, 'portfolio_analysis.json')
-    shutil.copy(json_path, json_dest)
-    print(f"Copied: {json_dest}")
+    if os.path.abspath(json_path) != os.path.abspath(json_dest):
+        shutil.copy(json_path, json_dest)
+        print(f"Copied: {json_dest}")
 
     print(f"\nAll visualizations saved to '{output_dir}/'")
 
@@ -419,7 +672,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate portfolio analysis visualizations')
     parser.add_argument('--input', type=str, default='portfolio_analysis.json',
                         help='Input JSON file path')
-    parser.add_argument('--output-dir', type=str, default='result',
+    parser.add_argument('--output-dir', type=str, default='reports',
                         help='Output directory for visualizations')
 
     args = parser.parse_args()

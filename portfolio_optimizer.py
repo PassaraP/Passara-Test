@@ -268,6 +268,69 @@ def get_portfolio_returns_series(
     return result
 
 
+def backtest_benchmark(
+    returns: pd.DataFrame,
+    benchmark_returns: pd.Series,
+    initial_value: float = 100.0
+) -> pd.DataFrame:
+    """
+    Backtest benchmark performance on the same period as portfolio returns.
+
+    Args:
+        returns: DataFrame of asset returns (used for date alignment)
+        benchmark_returns: Series of benchmark returns
+        initial_value: Starting portfolio value
+
+    Returns:
+        DataFrame with benchmark values and returns
+    """
+    aligned_benchmark = benchmark_returns.reindex(returns.index).fillna(0)
+    benchmark_value = initial_value * np.exp(aligned_benchmark.cumsum())
+
+    backtest = pd.DataFrame({
+        'benchmark_return': aligned_benchmark,
+        'cumulative_return': aligned_benchmark.cumsum(),
+        'benchmark_value': benchmark_value
+    }, index=returns.index)
+
+    return backtest
+
+
+def get_individual_stock_performance(
+    returns: pd.DataFrame,
+    weights: Dict[str, float],
+    initial_value: float = 100.0
+) -> Dict[str, List[Dict]]:
+    """
+    Calculate individual stock performance based on portfolio allocation.
+
+    Args:
+        returns: DataFrame of asset returns
+        weights: Dictionary of asset weights
+        initial_value: Starting portfolio value
+
+    Returns:
+        Dictionary mapping ticker to list of date-value pairs
+    """
+    result = {}
+    for ticker, weight in weights.items():
+        if ticker in returns.columns and weight > 0.001:
+            stock_returns = returns[ticker]
+            allocated_value = initial_value * weight
+            stock_value = allocated_value * np.exp(stock_returns.cumsum())
+
+            stock_data = []
+            for date, value in stock_value.items():
+                stock_data.append({
+                    'date': date.strftime('%Y-%m-%d'),
+                    'value': float(value),
+                    'return': float(stock_returns.loc[date])
+                })
+            result[ticker] = stock_data
+
+    return result
+
+
 if __name__ == "__main__":
     from data_loader import load_and_prepare_data, get_default_tickers
 
